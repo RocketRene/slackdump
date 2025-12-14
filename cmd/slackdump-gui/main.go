@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/joho/godotenv"
 	"github.com/rusq/slack"
 	"github.com/rusq/slackdump/v3"
 	"github.com/rusq/slackdump/v3/auth"
@@ -41,7 +44,35 @@ func main() {
 	
 	cookieEntry := widget.NewEntry()
 	cookieEntry.SetPlaceHolder("Enter 'd' cookie value")
-	cookieEntry.Password = true
+	// Make cookie visible by default (not password masked)
+
+	// Load credentials from .env if available
+	loadCredentials := func() {
+		// Try to load from current directory .env
+		if err := godotenv.Load(".env"); err == nil {
+			if subdomain := os.Getenv("SLACK_SUBDOMAIN"); subdomain != "" {
+				subdomainEntry.SetText(subdomain)
+			}
+			if cookie := os.Getenv("SLACK_COOKIE"); cookie != "" {
+				cookieEntry.SetText(cookie)
+			}
+		}
+	}
+	loadCredentials()
+
+	// Function to save credentials to .env
+	saveCredentials := func(subdomain, cookie string) error {
+		// Get current directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		
+		envPath := filepath.Join(cwd, ".env")
+		content := fmt.Sprintf("SLACK_SUBDOMAIN=%s\nSLACK_COOKIE=%s\n", subdomain, cookie)
+		
+		return os.WriteFile(envPath, []byte(content), 0600)
+	}
 
 	// Output folder - default to ~/Documents/koberesearch/
 	outputFolderEntry := widget.NewEntry()
@@ -100,6 +131,12 @@ func main() {
 		if subdomain == "" || cookie == "" {
 			dialog.ShowError(fmt.Errorf("subdomain and cookie are required"), myWindow)
 			return
+		}
+
+		// Save credentials to .env file
+		if err := saveCredentials(subdomain, cookie); err != nil {
+			// Don't fail if save fails, just log
+			statusLabel.SetText(fmt.Sprintf("Warning: Failed to save credentials: %v", err))
 		}
 
 		// Disable button during fetch
