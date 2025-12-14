@@ -2,8 +2,8 @@ package main
 
 import (
 "context"
-"encoding/json"
 "fmt"
+"log/slog"
 "os"
 "os/exec"
 "path/filepath"
@@ -18,12 +18,21 @@ import (
 "fyne.io/fyne/v2/container"
 "fyne.io/fyne/v2/dialog"
 "fyne.io/fyne/v2/widget"
+"github.com/jmoiron/sqlx"
 
 "github.com/joho/godotenv"
+"github.com/rusq/fsadapter"
 "github.com/rusq/slack"
 "github.com/rusq/slackdump/v3"
 "github.com/rusq/slackdump/v3/auth"
+"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase"
+"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase/repository"
+"github.com/rusq/slackdump/v3/internal/chunk/control"
+"github.com/rusq/slackdump/v3/internal/convert/transform/fileproc"
 "github.com/rusq/slackdump/v3/internal/network"
+"github.com/rusq/slackdump/v3/internal/structures"
+"github.com/rusq/slackdump/v3/source"
+"github.com/rusq/slackdump/v3/stream"
 )
 
 type channelItem struct {
@@ -367,69 +376,74 @@ exportProgressBar.SetValue(0)
 exportFolder := filepath.Join(outputPath, fmt.Sprintf("export_%s", time.Now().Format("20060102_150405")))
 os.MkdirAll(exportFolder, 0755)
 
-dbPathLabel := widget.NewLabel(fmt.Sprintf("Output: %s", exportFolder))
+dbFile := filepath.Join(exportFolder, source.DefaultDBFile)
+dbPathLabel := widget.NewLabel(fmt.Sprintf("Database: %s", dbFile))
 dbPathLabel.Wrapping = fyne.TextWrapWord
 
 // Start export in goroutine
 go func() {
 ctx := context.Background()
-total := len(selectedChannels)
-exported := 0
-skipped := 0
-failed := 0
 
-for i, ch := range selectedChannels {
-progress := float64(i) / float64(total)
-currentChannel := fmt.Sprintf("Scraping: %s (%s)", ch.Name, ch.ID)
-status := fmt.Sprintf("Channel %d/%d", i+1, total)
+// Create channel IDs list for EntityList
+var channelIDs []string
+for _, ch := range selectedChannels {
+channelIDs = append(channelIDs, ch.ID)
+}
 
-exportProgressBar.SetValue(progress)
-currentChannelLabel.SetText(currentChannel)
-statusLabel.SetText(status)
-
-// Dump channel
-conv, err := (*sess).Dump(ctx, ch.ID, oldest, time.Now())
+// Create entity list from channel IDs
+entityList, err := structures.NewEntityList(channelIDs)
 if err != nil {
-statusLabel.SetText(fmt.Sprintf("Error dumping %s: %v", ch.Name, err))
-failed++
-time.Sleep(2 * time.Second)
-continue
+statusLabel.SetText(fmt.Sprintf("Error creating entity list: %v", err))
+dialog.ShowError(err, myWindow)
+return
 }
 
-// Skip empty channels
-if len(conv.Messages) == 0 {
-statusLabel.SetText(fmt.Sprintf("Skipping %s: no messages found", ch.Name))
-skipped++
-time.Sleep(1 * time.Second)
-continue
-}
+statusLabel.SetText("Initializing database...")
 
-// Save to JSON file
-filename := filepath.Join(exportFolder, fmt.Sprintf("%s_%s.json", ch.Name, ch.ID))
-data, err := json.MarshalIndent(conv, "", "  ")
+// Open SQLite database connection
+conn, err := sqlx.Open(repository.Driver, dbFile)
 if err != nil {
-statusLabel.SetText(fmt.Sprintf("Error marshaling %s: %v", ch.Name, err))
-failed++
-time.Sleep(2 * time.Second)
-continue
+statusLabel.SetText(fmt.Sprintf("Error opening database: %v", err))
+dialog.ShowError(err, myWindow)
+return
+}
+defer conn.Close()
+
+statusLabel.SetText("Creating database controller...")
+
+// Create database controller using the same pattern as archive command
+ctrl, err := createDBController(ctx, conn, *sess, exportFolder, oldest, time.Now())
+if err != nil {
+statusLabel.SetText(fmt.Sprintf("Error creating controller: %v", err))
+dialog.ShowError(err, myWindow)
+return
+}
+defer func() {
+if err := ctrl.Close(); err != nil {
+slog.ErrorContext(ctx, "unable to close database controller", "error", err)
+}
+}()
+
+statusLabel.SetText("Exporting channels to database...")
+currentChannelLabel.SetText("Streaming data to SQLite database...")
+
+// Use a progress callback to update the UI
+progressCallback := func(sr stream.Result) error {
+// Update progress based on the result
+currentChannelLabel.SetText(fmt.Sprintf("Processing: %s", sr.String()))
+return nil
 }
 
-if err := os.WriteFile(filename, data, 0644); err != nil {
-statusLabel.SetText(fmt.Sprintf("Error writing %s: %v", ch.Name, err))
-failed++
-time.Sleep(2 * time.Second)
-continue
-}
-
-// Success!
-statusLabel.SetText(fmt.Sprintf("✓ Saved %s: %d messages", ch.Name, len(conv.Messages)))
-exported++
-time.Sleep(500 * time.Millisecond)
+// Run the controller with the entity list
+if err := ctrl.RunNoTransform(ctx, entityList); err != nil {
+statusLabel.SetText(fmt.Sprintf("Export failed: %v", err))
+dialog.ShowError(err, myWindow)
+return
 }
 
 exportProgressBar.SetValue(1.0)
 currentChannelLabel.SetText("✓ Export Complete!")
-statusLabel.SetText(fmt.Sprintf("✓ Complete: %d exported, %d skipped (empty), %d failed\nOutput: %s", exported, skipped, failed, exportFolder))
+statusLabel.SetText(fmt.Sprintf("✓ Export completed successfully!\nDatabase: %s", dbFile))
 }()
 
 backBtn := widget.NewButton("← Back to Selection", func() {
@@ -459,4 +473,69 @@ container.NewHBox(backBtn, openFolderBtn),
 nil, nil,
 widget.NewLabel(""),
 )
+}
+
+// createDBController creates a database controller similar to the archive command's DBController
+func createDBController(ctx context.Context, conn *sqlx.DB, sess *slackdump.Session, dirname string, oldest, latest time.Time) (*control.Controller, error) {
+lg := slog.Default()
+
+// Create session info
+sessionInfo := dbase.SessionInfo{
+FromTS:         &oldest,
+ToTS:           &latest,
+FilesEnabled:   false, // disable file download for GUI
+AvatarsEnabled: false, // disable avatar download for GUI
+Mode:           "gui-export",
+Args:           "Kobe User Research Export",
+}
+
+// Create database processor
+dbp, err := dbase.New(ctx, conn, sessionInfo)
+if err != nil {
+return nil, err
+}
+
+// Create stream options
+sopts := []stream.Option{
+stream.OptLatest(latest),
+stream.OptOldest(oldest),
+stream.OptResultFn(func(sr stream.Result) error {
+lg.Info("stream", "result", sr.String())
+return nil
+}),
+}
+
+// Use Session's Stream method to create a streamer with the correct client
+streamer := sess.Stream(sopts...)
+
+// Create stub downloaders (not used but required by controller)
+dl := fileproc.NewDownloader(
+ctx,
+false, // WithFiles disabled
+sess.Client(),
+fsadapter.NewDirectory(dirname),
+lg,
+)
+avdl := fileproc.NewDownloader(
+ctx,
+false, // WithAvatars disabled
+sess.Client(),
+fsadapter.NewDirectory(dirname),
+lg,
+)
+
+// Create controller
+ctrl, err := control.New(
+ctx,
+streamer,
+dbp,
+control.WithFiler(fileproc.New(dl)),
+control.WithAvatarProcessor(fileproc.NewAvatarProc(avdl)),
+control.WithFlags(control.Flags{MemberOnly: false, RecordFiles: false, ChannelUsers: false}),
+)
+if err != nil {
+return nil, err
+}
+
+return ctrl, nil
 }
