@@ -141,6 +141,7 @@ func main() {
 				limits = network.NoLimits
 			case "Fast":
 				// Custom fast limits - higher than default but not unlimited
+				// Create a copy to avoid modifying global defaults
 				limits = network.DefLimits
 				limits.Tier2.Boost = 60  // Increase from 20
 				limits.Tier2.Burst = 10  // Increase from 3
@@ -167,8 +168,7 @@ func main() {
 				count := len(channels)
 				channelsMux.Unlock()
 				
-				// Update UI on main thread
-				myWindow.Canvas().Content().Refresh()
+				// Update UI - Fyne handles thread-safety internally
 				statusLabel.SetText(fmt.Sprintf("Fetching channels... (%d found)", count))
 				channelList.Refresh()
 				
