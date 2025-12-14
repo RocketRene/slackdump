@@ -427,13 +427,6 @@ slog.ErrorContext(ctx, "unable to close database controller", "error", err)
 statusLabel.SetText("Exporting channels to database...")
 currentChannelLabel.SetText("Streaming data to SQLite database...")
 
-// Use a progress callback to update the UI
-progressCallback := func(sr stream.Result) error {
-// Update progress based on the result
-currentChannelLabel.SetText(fmt.Sprintf("Processing: %s", sr.String()))
-return nil
-}
-
 // Run the controller with the entity list
 if err := ctrl.RunNoTransform(ctx, entityList); err != nil {
 statusLabel.SetText(fmt.Sprintf("Export failed: %v", err))

@@ -8,6 +8,7 @@ A graphical user interface for the Slackdump tool, specifically designed for res
 - **Channel Listing**: Get a full list of all channels in your workspace
 - **Date Filtering**: Default export from 2025 (configurable)
 - **Direct Integration**: Uses the slackdump package directly (not as an external binary)
+- **SQLite Database Export**: Saves all data to a SQLite database using the same format as the archive command
 
 ## Building
 
@@ -37,8 +38,28 @@ After building, run the executable:
 1. Enter your workspace subdomain (e.g., "myworkspace" for myworkspace.slack.com)
 2. Enter your Slack 'd' cookie value
 3. Select the year for export (defaults to 2025)
-4. Click "Get Full List of Channels" to authenticate and retrieve channels
-5. Use "Export Selected Channels" for future export functionality
+4. Click "Next: Select Channels" to authenticate and retrieve channels
+5. Select the channels you want to export
+6. Click "Export Selected" to start the export process
+
+## Export Format
+
+The tool exports data to a SQLite database in the same format as the `slackdump archive` command:
+
+- **Database File**: `slackdump.sqlite` in the export folder
+- **Database Tables**:
+  - `SESSION`: Export session metadata
+  - `CHANNEL`: Channel information
+  - `MESSAGE`: All messages and threads
+  - `S_USER`: User information
+  - `FILE`: File metadata
+  - `WORKSPACE`: Workspace information
+  - Additional tables for search results and mappings
+
+The database can be:
+- Queried directly using SQLite tools (e.g., SQLite Browser, DBeaver)
+- Converted to other formats using `slackdump convert`
+- Viewed using `slackdump view <database-file>`
 
 ## Authentication
 
@@ -51,10 +72,6 @@ To get the 'd' cookie:
 2. Open browser developer tools (F12)
 3. Go to Application/Storage > Cookies > https://slack.com
 4. Find the cookie named 'd' and copy its value
-
-## Note
-
-This is a minimal MVP (Minimum Viable Product) for research purposes. The export functionality is a placeholder and would need to be implemented based on specific requirements.
 
 ## Requirements
 
