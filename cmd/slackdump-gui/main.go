@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,8 +141,11 @@ func main() {
 		}
 
 		// Parse year for date filtering
-		year := 2025
-		fmt.Sscanf(selectedYear, "%d", &year)
+		year, err := strconv.Atoi(selectedYear)
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("invalid year: %w", err), myWindow)
+			return
+		}
 		oldest := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		statusLabel.SetText(fmt.Sprintf("Export functionality would export messages from %s onwards", oldest.Format("2006-01-02")))

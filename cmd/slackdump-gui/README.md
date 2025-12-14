@@ -14,7 +14,6 @@ A graphical user interface for the Slackdump tool, specifically designed for res
 To build the GUI application:
 
 ```bash
-cd /home/runner/work/slackdump/slackdump
 make gui
 ```
 
