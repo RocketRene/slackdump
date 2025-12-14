@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -13,8 +14,10 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/rusq/slack"
 	"github.com/rusq/slackdump/v3"
 	"github.com/rusq/slackdump/v3/auth"
+	"github.com/rusq/slackdump/v3/internal/network"
 	"github.com/rusq/slackdump/v3/types"
 )
 
@@ -40,6 +43,20 @@ func main() {
 	cookieEntry.SetPlaceHolder("Enter 'd' cookie value")
 	cookieEntry.Password = true
 
+	// Output folder - default to ~/Documents/koberesearch/
+	outputFolderEntry := widget.NewEntry()
+	outputFolderEntry.SetPlaceHolder("~/Documents/koberesearch/")
+	outputFolderEntry.SetText("~/Documents/koberesearch/")
+
+	// Options
+	ignoreMediaCheck := widget.NewCheck("Ignore Media (files/images)", nil)
+	ignoreMediaCheck.Checked = true // Default to true
+
+	// Speed settings
+	speedLabel := widget.NewLabel("Fetch Speed:")
+	speedSelect := widget.NewSelect([]string{"Default", "Fast", "Maximum"}, nil)
+	speedSelect.SetSelected("Fast") // Default to Fast
+	
 	// Date selection - default to 2025
 	yearLabel := widget.NewLabel("Export Year:")
 	yearSelect := widget.NewSelect([]string{"2025", "2024", "2023", "2022", "2021"}, nil)
@@ -49,21 +66,34 @@ func main() {
 	statusLabel := widget.NewLabel("")
 	statusLabel.Wrapping = fyne.TextWrapWord
 
+	var channels types.Channels
+	var channelsMux sync.Mutex
+	var sess *slackdump.Session
+
 	// Channels list
 	channelList := widget.NewList(
-		func() int { return 0 },
+		func() int {
+			channelsMux.Lock()
+			defer channelsMux.Unlock()
+			return len(channels)
+		},
 		func() fyne.CanvasObject {
 			return widget.NewLabel("")
 		},
 		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			channelsMux.Lock()
+			defer channelsMux.Unlock()
+			if id < len(channels) {
+				label := obj.(*widget.Label)
+				ch := channels[id]
+				label.SetText(fmt.Sprintf("%s (%s)", ch.Name, ch.ID))
+			}
 		},
 	)
 
-	var channels types.Channels
-	var sess *slackdump.Session
-
-	// Get Channels button
-	getChannelsBtn := widget.NewButton("Get Full List of Channels", func() {
+	// Get Channels button (declare variable first for closure)
+	var getChannelsBtn *widget.Button
+	getChannelsBtn = widget.NewButton("Get Full List of Channels", func() {
 		subdomain := strings.TrimSpace(subdomainEntry.Text)
 		cookie := strings.TrimSpace(cookieEntry.Text)
 
@@ -72,60 +102,91 @@ func main() {
 			return
 		}
 
-		statusLabel.SetText("Authenticating...")
-		myWindow.Canvas().Refresh(statusLabel)
-
-		// Authenticate
-		ctx := context.Background()
-		authProvider, err := auth.NewCookieOnlyAuth(ctx, subdomain, cookie)
-		if err != nil {
-			statusLabel.SetText(fmt.Sprintf("Authentication failed: %v", err))
-			dialog.ShowError(err, myWindow)
-			return
-		}
-
-		// Test authentication
-		_, err = authProvider.Test(ctx)
-		if err != nil {
-			statusLabel.SetText(fmt.Sprintf("Authentication test failed: %v", err))
-			dialog.ShowError(err, myWindow)
-			return
-		}
-
-		statusLabel.SetText("Authenticated! Getting channels...")
-		myWindow.Canvas().Refresh(statusLabel)
-
-		// Create session
-		sess, err = slackdump.New(ctx, authProvider)
-		if err != nil {
-			statusLabel.SetText(fmt.Sprintf("Failed to create session: %v", err))
-			dialog.ShowError(err, myWindow)
-			return
-		}
-
-		// Get channels
-		channels, err = sess.GetChannels(ctx, slackdump.AllChanTypes...)
-		if err != nil {
-			statusLabel.SetText(fmt.Sprintf("Failed to get channels: %v", err))
-			dialog.ShowError(err, myWindow)
-			return
-		}
-
-		statusLabel.SetText(fmt.Sprintf("Retrieved %d channels", len(channels)))
-
-		// Update the list
-		channelList.Length = func() int { return len(channels) }
-		channelList.CreateItem = func() fyne.CanvasObject {
-			return widget.NewLabel("")
-		}
-		channelList.UpdateItem = func(id widget.ListItemID, obj fyne.CanvasObject) {
-			if id < len(channels) {
-				label := obj.(*widget.Label)
-				ch := channels[id]
-				label.SetText(fmt.Sprintf("%s (%s)", ch.Name, ch.ID))
-			}
-		}
+		// Disable button during fetch
+		getChannelsBtn.Disable()
+		
+		// Clear previous channels
+		channelsMux.Lock()
+		channels = nil
+		channelsMux.Unlock()
 		channelList.Refresh()
+
+		statusLabel.SetText("Authenticating...")
+
+		// Run in goroutine to keep UI responsive
+		go func() {
+			defer getChannelsBtn.Enable()
+			
+			// Authenticate
+			ctx := context.Background()
+			authProvider, err := auth.NewCookieOnlyAuth(ctx, subdomain, cookie)
+			if err != nil {
+				statusLabel.SetText(fmt.Sprintf("Authentication failed: %v", err))
+				return
+			}
+
+			// Test authentication
+			_, err = authProvider.Test(ctx)
+			if err != nil {
+				statusLabel.SetText(fmt.Sprintf("Authentication test failed: %v", err))
+				return
+			}
+
+			statusLabel.SetText("Authenticated! Getting channels...")
+
+			// Determine speed limits based on user selection
+			var limits network.Limits
+			switch speedSelect.Selected {
+			case "Maximum":
+				limits = network.NoLimits
+			case "Fast":
+				// Custom fast limits - higher than default but not unlimited
+				limits = network.DefLimits
+				limits.Tier2.Boost = 60  // Increase from 20
+				limits.Tier2.Burst = 10  // Increase from 3
+			default: // "Default"
+				limits = network.DefLimits
+			}
+
+			// Create session with configured limits
+			opts := []slackdump.Option{
+				slackdump.WithLimits(limits),
+			}
+			sess, err = slackdump.New(ctx, authProvider, opts...)
+			if err != nil {
+				statusLabel.SetText(fmt.Sprintf("Failed to create session: %v", err))
+				return
+			}
+
+			// Stream channels as they arrive
+			statusLabel.SetText("Fetching channels...")
+			err = sess.StreamChannels(ctx, slackdump.AllChanTypes, func(ch slack.Channel) error {
+				// Add channel to list (thread-safe)
+				channelsMux.Lock()
+				channels = append(channels, ch)
+				count := len(channels)
+				channelsMux.Unlock()
+				
+				// Update UI on main thread
+				myWindow.Canvas().Content().Refresh()
+				statusLabel.SetText(fmt.Sprintf("Fetching channels... (%d found)", count))
+				channelList.Refresh()
+				
+				return nil
+			})
+
+			if err != nil {
+				statusLabel.SetText(fmt.Sprintf("Failed to get channels: %v", err))
+				return
+			}
+
+			channelsMux.Lock()
+			finalCount := len(channels)
+			channelsMux.Unlock()
+			
+			statusLabel.SetText(fmt.Sprintf("✓ Retrieved %d channels", finalCount))
+			channelList.Refresh()
+		}()
 	})
 
 	// Export button (for future enhancement)
@@ -148,10 +209,20 @@ func main() {
 		}
 		oldest := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		statusLabel.SetText(fmt.Sprintf("Export functionality would export messages from %s onwards", oldest.Format("2006-01-02")))
+		channelsMux.Lock()
+		channelCount := len(channels)
+		channelsMux.Unlock()
+
+		outputFolder := outputFolderEntry.Text
+		if outputFolder == "" {
+			outputFolder = "~/Documents/koberesearch/"
+		}
+		ignoreMedia := ignoreMediaCheck.Checked
+
+		statusLabel.SetText(fmt.Sprintf("Export would save to: %s (ignore media: %v)", outputFolder, ignoreMedia))
 		dialog.ShowInformation("Export", 
-			fmt.Sprintf("This is a minimal MVP. Export functionality would export %d channels from %s onwards.", 
-			len(channels), oldest.Format("2006-01-02")), myWindow)
+			fmt.Sprintf("This is a minimal MVP. Export would save %d channels from %s onwards to:\n%s\n\nIgnore Media: %v", 
+			channelCount, oldest.Format("2006-01-02"), outputFolder, ignoreMedia), myWindow)
 	})
 
 	// Layout
@@ -160,7 +231,13 @@ func main() {
 		subdomainEntry,
 		widget.NewLabel("Cookie (d value):"),
 		cookieEntry,
+		widget.NewLabel("Output Folder:"),
+		outputFolderEntry,
+		widget.NewSeparator(),
+		ignoreMediaCheck,
+		container.NewHBox(speedLabel, speedSelect),
 		container.NewHBox(yearLabel, yearSelect),
+		widget.NewSeparator(),
 		getChannelsBtn,
 	)
 
