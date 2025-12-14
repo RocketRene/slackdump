@@ -97,6 +97,10 @@ func main() {
 	statusLabel := widget.NewLabel("")
 	statusLabel.Wrapping = fyne.TextWrapWord
 
+	// Progress bar for visual feedback during fetch
+	progressBar := widget.NewProgressBarInfinite()
+	progressBar.Hide() // Hidden by default
+
 	var channels types.Channels
 	var channelsMux sync.Mutex
 	var sess *slackdump.Session
@@ -142,6 +146,9 @@ func main() {
 		// Disable button during fetch
 		getChannelsBtn.Disable()
 		
+		// Show progress bar
+		progressBar.Show()
+		
 		// Clear previous channels
 		channelsMux.Lock()
 		channels = nil
@@ -152,7 +159,10 @@ func main() {
 
 		// Run in goroutine to keep UI responsive
 		go func() {
-			defer getChannelsBtn.Enable()
+			defer func() {
+				getChannelsBtn.Enable()
+				progressBar.Hide()
+			}()
 			
 			// Authenticate
 			ctx := context.Background()
@@ -286,6 +296,7 @@ func main() {
 			authForm,
 			widget.NewSeparator(),
 			statusLabel,
+			progressBar,
 		),
 		exportBtn,
 		nil,
