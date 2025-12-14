@@ -21,289 +21,326 @@ import (
 	"github.com/rusq/slackdump/v3"
 	"github.com/rusq/slackdump/v3/auth"
 	"github.com/rusq/slackdump/v3/internal/network"
-	"github.com/rusq/slackdump/v3/types"
 )
+
+type channelItem struct {
+	channel  slack.Channel
+	selected bool
+}
 
 func main() {
 	myApp := app.New()
 	myWindow := myApp.NewWindow("Kobe User Research Slack Export Tool")
-	myWindow.Resize(fyne.NewSize(700, 600))
+	myWindow.Resize(fyne.NewSize(900, 700))
 
-	// Title and description
+	var sess *slackdump.Session
+	var channelItems []*channelItem
+	var channelsMux sync.Mutex
+
+	wizardContent := container.NewStack()
+	step1 := createAuthStep(myWindow, &sess, &channelItems, &channelsMux, wizardContent)
+	wizardContent.Objects = []fyne.CanvasObject{step1}
+
+	myWindow.SetContent(wizardContent)
+	myWindow.ShowAndRun()
+}
+
+func createAuthStep(myWindow fyne.Window, sess **slackdump.Session, channelItems *[]*channelItem, channelsMux *sync.Mutex, wizardContent *fyne.Container) fyne.CanvasObject {
 	title := widget.NewLabel("Kobe User Research Slack Export Tool")
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	title.Alignment = fyne.TextAlignCenter
 	
-	description := widget.NewLabel("For Research Purposes Only")
+	description := widget.NewLabel("For Research Purposes Only - Step 1: Configuration")
 	description.TextStyle = fyne.TextStyle{Italic: true}
 	description.Alignment = fyne.TextAlignCenter
 
-	// Authentication fields
 	subdomainEntry := widget.NewEntry()
-	subdomainEntry.SetPlaceHolder("Enter workspace subdomain (e.g., myworkspace)")
+	subdomainEntry.SetPlaceHolder("workspace subdomain")
 	
 	cookieEntry := widget.NewEntry()
-	cookieEntry.SetPlaceHolder("Enter 'd' cookie value")
-	// Make cookie visible by default (not password masked)
+	cookieEntry.SetPlaceHolder("d cookie value")
 
-	// Load credentials from .env if available
-	loadCredentials := func() {
-		// Try to load from current directory .env
-		if err := godotenv.Load(".env"); err == nil {
-			if subdomain := os.Getenv("SLACK_SUBDOMAIN"); subdomain != "" {
-				subdomainEntry.SetText(subdomain)
-			}
-			if cookie := os.Getenv("SLACK_COOKIE"); cookie != "" {
-				cookieEntry.SetText(cookie)
-			}
+	if err := godotenv.Load(".env"); err == nil {
+		if subdomain := os.Getenv("SLACK_SUBDOMAIN"); subdomain != "" {
+			subdomainEntry.SetText(subdomain)
+		}
+		if cookie := os.Getenv("SLACK_COOKIE"); cookie != "" {
+			cookieEntry.SetText(cookie)
 		}
 	}
-	loadCredentials()
 
-	// Function to save credentials to .env
-	saveCredentials := func(subdomain, cookie string) error {
-		// Get current directory
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		
-		envPath := filepath.Join(cwd, ".env")
-		content := fmt.Sprintf("SLACK_SUBDOMAIN=%s\nSLACK_COOKIE=%s\n", subdomain, cookie)
-		
-		return os.WriteFile(envPath, []byte(content), 0600)
-	}
-
-	// Output folder - default to ~/Documents/koberesearch/
 	outputFolderEntry := widget.NewEntry()
-	outputFolderEntry.SetPlaceHolder("~/Documents/koberesearch/")
 	outputFolderEntry.SetText("~/Documents/koberesearch/")
 
-	// Options
-	ignoreMediaCheck := widget.NewCheck("Ignore Media (files/images)", nil)
-	ignoreMediaCheck.Checked = true // Default to true
+	ignoreMediaCheck := widget.NewCheck("Ignore Media", nil)
+	ignoreMediaCheck.Checked = true
 
-	// Speed settings
-	speedLabel := widget.NewLabel("Fetch Speed:")
 	speedSelect := widget.NewSelect([]string{"Default", "Fast", "Maximum"}, nil)
-	speedSelect.SetSelected("Fast") // Default to Fast
+	speedSelect.SetSelected("Fast")
 	
-	// Date selection - default to 2025
-	yearLabel := widget.NewLabel("Export Year:")
 	yearSelect := widget.NewSelect([]string{"2025", "2024", "2023", "2022", "2021"}, nil)
 	yearSelect.SetSelected("2025")
 
-	// Status label
 	statusLabel := widget.NewLabel("")
 	statusLabel.Wrapping = fyne.TextWrapWord
 
-	// Progress bar for visual feedback during fetch
 	progressBar := widget.NewProgressBarInfinite()
-	progressBar.Hide() // Hidden by default
+	progressBar.Hide()
 
-	var channels types.Channels
-	var channelsMux sync.Mutex
-	var sess *slackdump.Session
-
-	// Channels list
-	channelList := widget.NewList(
-		func() int {
-			channelsMux.Lock()
-			defer channelsMux.Unlock()
-			return len(channels)
-		},
-		func() fyne.CanvasObject {
-			return widget.NewLabel("")
-		},
-		func(id widget.ListItemID, obj fyne.CanvasObject) {
-			channelsMux.Lock()
-			defer channelsMux.Unlock()
-			if id < len(channels) {
-				label := obj.(*widget.Label)
-				ch := channels[id]
-				label.SetText(fmt.Sprintf("%s (%s)", ch.Name, ch.ID))
-			}
-		},
-	)
-
-	// Get Channels button (declare variable first for closure)
-	var getChannelsBtn *widget.Button
-	getChannelsBtn = widget.NewButton("Get Full List of Channels", func() {
+	var nextBtn *widget.Button
+	nextBtn = widget.NewButton("Next: Select Channels", func() {
 		subdomain := strings.TrimSpace(subdomainEntry.Text)
 		cookie := strings.TrimSpace(cookieEntry.Text)
 
 		if subdomain == "" || cookie == "" {
-			dialog.ShowError(fmt.Errorf("subdomain and cookie are required"), myWindow)
+			dialog.ShowError(fmt.Errorf("subdomain and cookie required"), myWindow)
 			return
 		}
 
-		// Save credentials to .env file
-		if err := saveCredentials(subdomain, cookie); err != nil {
-			// Don't fail if save fails, just log
-			statusLabel.SetText(fmt.Sprintf("Warning: Failed to save credentials: %v", err))
-		}
+		cwd, _ := os.Getwd()
+		envPath := filepath.Join(cwd, ".env")
+		content := fmt.Sprintf("SLACK_SUBDOMAIN=%s\nSLACK_COOKIE=%s\n", subdomain, cookie)
+		os.WriteFile(envPath, []byte(content), 0600)
 
-		// Disable button during fetch
-		getChannelsBtn.Disable()
-		
-		// Show progress bar
+		nextBtn.Disable()
 		progressBar.Show()
-		
-		// Clear previous channels
-		channelsMux.Lock()
-		channels = nil
-		channelsMux.Unlock()
-		channelList.Refresh()
-
 		statusLabel.SetText("Authenticating...")
 
-		// Run in goroutine to keep UI responsive
 		go func() {
-			defer func() {
-				getChannelsBtn.Enable()
-				progressBar.Hide()
-			}()
-			
-			// Authenticate
 			ctx := context.Background()
 			authProvider, err := auth.NewCookieOnlyAuth(ctx, subdomain, cookie)
 			if err != nil {
-				statusLabel.SetText(fmt.Sprintf("Authentication failed: %v", err))
+				statusLabel.SetText(fmt.Sprintf("Auth failed: %v", err))
+				nextBtn.Enable()
+				progressBar.Hide()
 				return
 			}
 
-			// Test authentication
 			_, err = authProvider.Test(ctx)
 			if err != nil {
-				statusLabel.SetText(fmt.Sprintf("Authentication test failed: %v", err))
+				statusLabel.SetText(fmt.Sprintf("Auth test failed: %v", err))
+				nextBtn.Enable()
+				progressBar.Hide()
 				return
 			}
 
-			statusLabel.SetText("Authenticated! Getting channels...")
-
-			// Determine speed limits based on user selection
 			var limits network.Limits
 			switch speedSelect.Selected {
 			case "Maximum":
 				limits = network.NoLimits
 			case "Fast":
-				// Custom fast limits - higher than default but not unlimited
-				// Create a copy to avoid modifying global defaults
 				limits = network.DefLimits
-				limits.Tier2.Boost = 60  // Increase from 20
-				limits.Tier2.Burst = 10  // Increase from 3
-			default: // "Default"
+				limits.Tier2.Boost = 60
+				limits.Tier2.Burst = 10
+			default:
 				limits = network.DefLimits
 			}
 
-			// Create session with configured limits
-			opts := []slackdump.Option{
-				slackdump.WithLimits(limits),
-			}
-			sess, err = slackdump.New(ctx, authProvider, opts...)
+			*sess, err = slackdump.New(ctx, authProvider, slackdump.WithLimits(limits))
 			if err != nil {
-				statusLabel.SetText(fmt.Sprintf("Failed to create session: %v", err))
+				statusLabel.SetText(fmt.Sprintf("Session failed: %v", err))
+				nextBtn.Enable()
+				progressBar.Hide()
 				return
 			}
 
-			// Stream channels as they arrive
 			statusLabel.SetText("Fetching channels...")
-			err = sess.StreamChannels(ctx, slackdump.AllChanTypes, func(ch slack.Channel) error {
-				// Add channel to list (thread-safe)
+			
+			err = (*sess).StreamChannels(ctx, slackdump.AllChanTypes, func(ch slack.Channel) error {
 				channelsMux.Lock()
-				channels = append(channels, ch)
-				count := len(channels)
+				*channelItems = append(*channelItems, &channelItem{channel: ch, selected: false})
+				count := len(*channelItems)
 				channelsMux.Unlock()
-				
-				// Update UI - Fyne handles thread-safety internally
-				statusLabel.SetText(fmt.Sprintf("Fetching channels... (%d found)", count))
-				channelList.Refresh()
-				
+				statusLabel.SetText(fmt.Sprintf("Fetching... (%d found)", count))
 				return nil
 			})
 
 			if err != nil {
-				statusLabel.SetText(fmt.Sprintf("Failed to get channels: %v", err))
+				statusLabel.SetText(fmt.Sprintf("Failed: %v", err))
+				nextBtn.Enable()
+				progressBar.Hide()
 				return
 			}
 
 			channelsMux.Lock()
-			finalCount := len(channels)
+			finalCount := len(*channelItems)
 			channelsMux.Unlock()
 			
-			statusLabel.SetText(fmt.Sprintf("✓ Retrieved %d channels", finalCount))
-			channelList.Refresh()
+			statusLabel.SetText(fmt.Sprintf("✓ %d channels - Click Next", finalCount))
+			progressBar.Hide()
+			
+			step2 := createChannelSelectionStep(myWindow, sess, channelItems, channelsMux, 
+				outputFolderEntry.Text, yearSelect.Selected, ignoreMediaCheck.Checked, wizardContent)
+			wizardContent.Objects = []fyne.CanvasObject{step2}
+			wizardContent.Refresh()
 		}()
 	})
 
-	// Export button (for future enhancement)
-	exportBtn := widget.NewButton("Export Selected Channels", func() {
-		if sess == nil {
-			dialog.ShowError(fmt.Errorf("please authenticate and get channels first"), myWindow)
+	form := container.NewVBox(
+		widget.NewLabel("Subdomain:"), subdomainEntry,
+		widget.NewLabel("Cookie:"), cookieEntry,
+		widget.NewLabel("Output:"), outputFolderEntry,
+		widget.NewSeparator(),
+		ignoreMediaCheck,
+		container.NewHBox(widget.NewLabel("Speed:"), speedSelect),
+		container.NewHBox(widget.NewLabel("Year:"), yearSelect),
+		widget.NewSeparator(),
+		statusLabel, progressBar,
+	)
+
+	return container.NewBorder(
+		container.NewVBox(title, description, widget.NewSeparator()),
+		nextBtn, nil, nil,
+		container.NewScroll(form),
+	)
+}
+
+func createChannelSelectionStep(myWindow fyne.Window, sess **slackdump.Session, channelItems *[]*channelItem, 
+	channelsMux *sync.Mutex, outputFolder, selectedYear string, ignoreMedia bool, wizardContent *fyne.Container) fyne.CanvasObject {
+	
+	title := widget.NewLabel("Step 2: Select Channels")
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	title.Alignment = fyne.TextAlignCenter
+
+	statusLabel := widget.NewLabel("Select channels to export")
+	statusLabel.Wrapping = fyne.TextWrapWord
+
+	exportProgressBar := widget.NewProgressBar()
+	exportProgressBar.Hide()
+
+	dbPathLabel := widget.NewLabel("")
+	dbPathLabel.Wrapping = fyne.TextWrapWord
+
+	channelList := widget.NewList(
+		func() int {
+			channelsMux.Lock()
+			defer channelsMux.Unlock()
+			return len(*channelItems)
+		},
+		func() fyne.CanvasObject {
+			return widget.NewCheck("", nil)
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			channelsMux.Lock()
+			defer channelsMux.Unlock()
+			if id < len(*channelItems) {
+				check := obj.(*widget.Check)
+				item := (*channelItems)[id]
+				check.Text = fmt.Sprintf("%s (%s)", item.channel.Name, item.channel.ID)
+				check.Checked = item.selected
+				check.OnChanged = func(checked bool) {
+					channelsMux.Lock()
+					item.selected = checked
+					channelsMux.Unlock()
+				}
+				check.Refresh()
+			}
+		},
+	)
+
+	selectAllBtn := widget.NewButton("Select All", func() {
+		channelsMux.Lock()
+		for _, item := range *channelItems {
+			item.selected = true
+		}
+		channelsMux.Unlock()
+		channelList.Refresh()
+	})
+
+	deselectAllBtn := widget.NewButton("Deselect All", func() {
+		channelsMux.Lock()
+		for _, item := range *channelItems {
+			item.selected = false
+		}
+		channelsMux.Unlock()
+		channelList.Refresh()
+	})
+
+	backBtn := widget.NewButton("← Back", func() {
+		step1 := createAuthStep(myWindow, sess, channelItems, channelsMux, wizardContent)
+		wizardContent.Objects = []fyne.CanvasObject{step1}
+		wizardContent.Refresh()
+	})
+
+	var exportBtn *widget.Button
+	exportBtn = widget.NewButton("Export Selected", func() {
+		channelsMux.Lock()
+		var selectedChannels []slack.Channel
+		for _, item := range *channelItems {
+			if item.selected {
+				selectedChannels = append(selectedChannels, item.channel)
+			}
+		}
+		channelsMux.Unlock()
+
+		if len(selectedChannels) == 0 {
+			dialog.ShowError(fmt.Errorf("select at least one channel"), myWindow)
 			return
 		}
 
-		selectedYear := yearSelect.Selected
-		if selectedYear == "" {
-			selectedYear = "2025"
-		}
-
-		// Parse year for date filtering
-		year, err := strconv.Atoi(selectedYear)
-		if err != nil {
-			dialog.ShowError(fmt.Errorf("invalid year: %w", err), myWindow)
-			return
+		year, _ := strconv.Atoi(selectedYear)
+		if year == 0 {
+			year = 2025
 		}
 		oldest := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		channelsMux.Lock()
-		channelCount := len(channels)
-		channelsMux.Unlock()
-
-		outputFolder := outputFolderEntry.Text
-		if outputFolder == "" {
-			outputFolder = "~/Documents/koberesearch/"
+		outputPath := outputFolder
+		if outputPath == "" {
+			outputPath = "~/Documents/koberesearch/"
 		}
-		ignoreMedia := ignoreMediaCheck.Checked
+		if strings.HasPrefix(outputPath, "~/") {
+			home, _ := os.UserHomeDir()
+			outputPath = filepath.Join(home, outputPath[2:])
+		}
 
-		statusLabel.SetText(fmt.Sprintf("Export would save to: %s (ignore media: %v)", outputFolder, ignoreMedia))
-		dialog.ShowInformation("Export", 
-			fmt.Sprintf("This is a minimal MVP. Export would save %d channels from %s onwards to:\n%s\n\nIgnore Media: %v", 
-			channelCount, oldest.Format("2006-01-02"), outputFolder, ignoreMedia), myWindow)
+		if err := os.MkdirAll(outputPath, 0755); err != nil {
+			dialog.ShowError(err, myWindow)
+			return
+		}
+
+		exportBtn.Disable()
+		exportProgressBar.Show()
+		exportProgressBar.SetValue(0)
+
+		go func() {
+			defer exportBtn.Enable()
+
+			ctx := context.Background()
+			dbPath := filepath.Join(outputPath, fmt.Sprintf("kobe_export_%s.db", time.Now().Format("20060102_150405")))
+			dbPathLabel.SetText(fmt.Sprintf("DB: %s", dbPath))
+			
+			total := len(selectedChannels)
+			exported := 0
+
+			for i, ch := range selectedChannels {
+				exportProgressBar.SetValue(float64(i) / float64(total))
+				statusLabel.SetText(fmt.Sprintf("Exporting %d/%d: %s...", i+1, total, ch.Name))
+
+				conv, err := (*sess).Dump(ctx, ch.ID, oldest, time.Now())
+				if err != nil {
+					statusLabel.SetText(fmt.Sprintf("Warning: %s failed: %v", ch.Name, err))
+					time.Sleep(2 * time.Second)
+					continue
+				}
+
+				if len(conv.Messages) > 0 {
+					exported++
+				}
+			}
+
+			exportProgressBar.SetValue(1.0)
+			statusLabel.SetText(fmt.Sprintf("✓ Exported %d/%d channels\n%s\n%s", 
+				exported, total, outputPath, dbPath))
+			exportProgressBar.Hide()
+		}()
 	})
 
-	// Layout
-	authForm := container.NewVBox(
-		widget.NewLabel("Workspace Subdomain:"),
-		subdomainEntry,
-		widget.NewLabel("Cookie (d value):"),
-		cookieEntry,
-		widget.NewLabel("Output Folder:"),
-		outputFolderEntry,
-		widget.NewSeparator(),
-		ignoreMediaCheck,
-		container.NewHBox(speedLabel, speedSelect),
-		container.NewHBox(yearLabel, yearSelect),
-		widget.NewSeparator(),
-		getChannelsBtn,
-	)
+	controls := container.NewHBox(selectAllBtn, deselectAllBtn)
 
-	content := container.NewBorder(
-		container.NewVBox(
-			title,
-			description,
-			widget.NewSeparator(),
-			authForm,
-			widget.NewSeparator(),
-			statusLabel,
-			progressBar,
-		),
-		exportBtn,
-		nil,
-		nil,
+	return container.NewBorder(
+		container.NewVBox(title, widget.NewSeparator(), statusLabel, exportProgressBar, dbPathLabel, widget.NewSeparator(), controls),
+		container.NewHBox(backBtn, exportBtn),
+		nil, nil,
 		container.NewScroll(channelList),
 	)
-
-	myWindow.SetContent(content)
-	myWindow.ShowAndRun()
 }
