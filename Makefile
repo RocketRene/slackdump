@@ -1,7 +1,9 @@
 SHELL=/bin/sh
 
 CMD=./cmd/slackdump
+GUI_CMD=./cmd/slackdump-gui
 OUTPUT=slackdump
+GUI_OUTPUT=slackdump-gui
 EXECUTABLE=slackdump
 BUILD=$(shell git describe --tags)
 COMMIT=$(shell git rev-parse --short HEAD)
@@ -34,6 +36,11 @@ $(foreach s,$(OSES),$(eval $(OUTPUT)-$s.zip: $(EXECUTABLE)))
 
 all: $(EXECUTABLE)
 
+gui: $(GUI_OUTPUT)
+
+$(GUI_OUTPUT):
+	GOARCH=$(GOARCH) GOOS=$(GOOS) go build -o $(GUI_OUTPUT) $(GUI_CMD)
+
 dist:
 	$(MAKE) $(ZIPFILES)
 
@@ -56,7 +63,7 @@ arm_%:
 
 
 clean:
-	-rm slackdump slackdump.exe $(wildcard *.zip)
+	-rm slackdump slackdump.exe slackdump-gui $(wildcard *.zip)
 	-rm -rf slackdump_$(shell date +%Y)*
 .PHONY: clean
 
