@@ -2,6 +2,7 @@ package main
 
 import (
 "context"
+"encoding/json"
 "fmt"
 "os"
 "path/filepath"
@@ -146,12 +147,35 @@ return
 
 statusLabel.SetText("Fetching channels...")
 
+// Update count periodically while fetching
+ticker := time.NewTicker(500 * time.Millisecond)
+done := make(chan bool)
+
+go func() {
+for {
+select {
+case <-done:
+ticker.Stop()
+return
+case <-ticker.C:
+channelsMux.Lock()
+count := len(*channelItems)
+channelsMux.Unlock()
+if count > 0 {
+statusLabel.SetText(fmt.Sprintf("Fetching channels... (%d found)", count))
+}
+}
+}
+}()
+
 err = (*sess).StreamChannels(ctx, slackdump.AllChanTypes, func(ch slack.Channel) error {
 channelsMux.Lock()
 *channelItems = append(*channelItems, &channelItem{channel: ch, selected: false})
 channelsMux.Unlock()
 return nil
 })
+
+done <- true
 
 if err != nil {
 statusLabel.SetText(fmt.Sprintf("Failed: %v", err))
@@ -290,7 +314,6 @@ dialog.ShowError(err, myWindow)
 return
 }
 
-// Move to Step 3: Export progress
 step3 := createExportStep(myWindow, sess, selectedChannels, outputPath, oldest, wizardContent, channelItems, channelsMux)
 wizardContent.Objects = []fyne.CanvasObject{step3}
 wizardContent.Refresh()
@@ -323,8 +346,10 @@ statusLabel.Wrapping = fyne.TextWrapWord
 exportProgressBar := widget.NewProgressBar()
 exportProgressBar.SetValue(0)
 
-dbPath := filepath.Join(outputPath, fmt.Sprintf("kobe_export_%s.db", time.Now().Format("20060102_150405")))
-dbPathLabel := widget.NewLabel(fmt.Sprintf("Database: %s", dbPath))
+exportFolder := filepath.Join(outputPath, fmt.Sprintf("export_%s", time.Now().Format("20060102_150405")))
+os.MkdirAll(exportFolder, 0755)
+
+dbPathLabel := widget.NewLabel(fmt.Sprintf("Output: %s", exportFolder))
 dbPathLabel.Wrapping = fyne.TextWrapWord
 
 // Start export in goroutine
@@ -334,7 +359,6 @@ total := len(selectedChannels)
 exported := 0
 
 for i, ch := range selectedChannels {
-// Update UI on main thread
 progress := float64(i) / float64(total)
 currentChannel := fmt.Sprintf("Scraping: %s (%s)", ch.Name, ch.ID)
 status := fmt.Sprintf("Channel %d/%d", i+1, total)
@@ -343,6 +367,7 @@ exportProgressBar.SetValue(progress)
 currentChannelLabel.SetText(currentChannel)
 statusLabel.SetText(status)
 
+// Dump channel
 conv, err := (*sess).Dump(ctx, ch.ID, oldest, time.Now())
 if err != nil {
 statusLabel.SetText(fmt.Sprintf("Warning: %s failed: %v", ch.Name, err))
@@ -350,14 +375,18 @@ time.Sleep(2 * time.Second)
 continue
 }
 
+// Save to JSON file
 if len(conv.Messages) > 0 {
+filename := filepath.Join(exportFolder, fmt.Sprintf("%s_%s.json", ch.Name, ch.ID))
+data, _ := json.MarshalIndent(conv, "", "  ")
+os.WriteFile(filename, data, 0644)
 exported++
 }
 }
 
 exportProgressBar.SetValue(1.0)
 currentChannelLabel.SetText("✓ Export Complete!")
-statusLabel.SetText(fmt.Sprintf("Exported %d/%d channels\nOutput: %s", exported, total, outputPath))
+statusLabel.SetText(fmt.Sprintf("Exported %d/%d channels\nOutput: %s", exported, total, exportFolder))
 }()
 
 backBtn := widget.NewButton("← Back to Selection", func() {
