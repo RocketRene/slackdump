@@ -5,7 +5,9 @@ import (
 "encoding/json"
 "fmt"
 "os"
+"os/exec"
 "path/filepath"
+"runtime"
 "strconv"
 "strings"
 "sync"
@@ -27,6 +29,22 @@ import (
 type channelItem struct {
 channel  slack.Channel
 selected bool
+}
+
+// openFileExplorer opens the native file explorer at the given path
+func openFileExplorer(path string) error {
+var cmd *exec.Cmd
+switch runtime.GOOS {
+case "linux":
+cmd = exec.Command("xdg-open", path)
+case "darwin":
+cmd = exec.Command("open", path)
+case "windows":
+cmd = exec.Command("explorer", path)
+default:
+return fmt.Errorf("unsupported platform")
+}
+return cmd.Start()
 }
 
 func main() {
@@ -357,6 +375,8 @@ go func() {
 ctx := context.Background()
 total := len(selectedChannels)
 exported := 0
+skipped := 0
+failed := 0
 
 for i, ch := range selectedChannels {
 progress := float64(i) / float64(total)
@@ -370,30 +390,59 @@ statusLabel.SetText(status)
 // Dump channel
 conv, err := (*sess).Dump(ctx, ch.ID, oldest, time.Now())
 if err != nil {
-statusLabel.SetText(fmt.Sprintf("Warning: %s failed: %v", ch.Name, err))
+statusLabel.SetText(fmt.Sprintf("Error dumping %s: %v", ch.Name, err))
+failed++
 time.Sleep(2 * time.Second)
 continue
 }
 
-// Save to JSON file
-if len(conv.Messages) > 0 {
-filename := filepath.Join(exportFolder, fmt.Sprintf("%s_%s.json", ch.Name, ch.ID))
-data, _ := json.MarshalIndent(conv, "", "  ")
-os.WriteFile(filename, data, 0644)
-exported++
+// Skip empty channels
+if len(conv.Messages) == 0 {
+statusLabel.SetText(fmt.Sprintf("Skipping %s: no messages found", ch.Name))
+skipped++
+time.Sleep(1 * time.Second)
+continue
 }
+
+// Save to JSON file
+filename := filepath.Join(exportFolder, fmt.Sprintf("%s_%s.json", ch.Name, ch.ID))
+data, err := json.MarshalIndent(conv, "", "  ")
+if err != nil {
+statusLabel.SetText(fmt.Sprintf("Error marshaling %s: %v", ch.Name, err))
+failed++
+time.Sleep(2 * time.Second)
+continue
+}
+
+if err := os.WriteFile(filename, data, 0644); err != nil {
+statusLabel.SetText(fmt.Sprintf("Error writing %s: %v", ch.Name, err))
+failed++
+time.Sleep(2 * time.Second)
+continue
+}
+
+// Success!
+statusLabel.SetText(fmt.Sprintf("✓ Saved %s: %d messages", ch.Name, len(conv.Messages)))
+exported++
+time.Sleep(500 * time.Millisecond)
 }
 
 exportProgressBar.SetValue(1.0)
 currentChannelLabel.SetText("✓ Export Complete!")
-statusLabel.SetText(fmt.Sprintf("Exported %d/%d channels\nOutput: %s", exported, total, exportFolder))
+statusLabel.SetText(fmt.Sprintf("✓ Complete: %d exported, %d skipped (empty), %d failed\nOutput: %s", exported, skipped, failed, exportFolder))
 }()
 
 backBtn := widget.NewButton("← Back to Selection", func() {
-step2 := createChannelSelectionStep(myWindow, sess, channelItems, channelsMux, 
+step2 := createChannelSelectionStep(myWindow, sess, channelItems, channelsMux,
 outputPath, "2025", true, wizardContent)
 wizardContent.Objects = []fyne.CanvasObject{step2}
 wizardContent.Refresh()
+})
+
+openFolderBtn := widget.NewButton("📁 Open Export Folder", func() {
+if err := openFileExplorer(exportFolder); err != nil {
+dialog.ShowError(fmt.Errorf("failed to open folder: %v", err), myWindow)
+}
 })
 
 return container.NewBorder(
@@ -406,7 +455,7 @@ statusLabel,
 widget.NewSeparator(),
 dbPathLabel,
 ),
-backBtn,
+container.NewHBox(backBtn, openFolderBtn),
 nil, nil,
 widget.NewLabel(""),
 )
