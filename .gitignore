@@ -28,6 +28,7 @@ __debug_bin
 *.yml
 *.yaml
 *.toml
+!.github/workflows/*.yml
 json/*
 examples/*
 experiments/*
