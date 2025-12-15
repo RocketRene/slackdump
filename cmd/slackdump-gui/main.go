@@ -4,6 +4,7 @@ import (
 "context"
 "fmt"
 "log/slog"
+"net/http"
 "os"
 "os/exec"
 "path/filepath"
@@ -19,6 +20,7 @@ import (
 "fyne.io/fyne/v2/dialog"
 "fyne.io/fyne/v2/widget"
 "github.com/jmoiron/sqlx"
+"github.com/pkg/browser"
 
 "github.com/joho/godotenv"
 "github.com/rusq/fsadapter"
@@ -31,6 +33,7 @@ import (
 "github.com/rusq/slackdump/v3/internal/convert/transform/fileproc"
 "github.com/rusq/slackdump/v3/internal/network"
 "github.com/rusq/slackdump/v3/internal/structures"
+"github.com/rusq/slackdump/v3/internal/viewer"
 "github.com/rusq/slackdump/v3/source"
 "github.com/rusq/slackdump/v3/stream"
 )
@@ -437,6 +440,15 @@ return
 exportProgressBar.SetValue(1.0)
 currentChannelLabel.SetText("✓ Export Complete!")
 statusLabel.SetText(fmt.Sprintf("✓ Export completed successfully!\nDatabase: %s", dbFile))
+
+// Start the viewer automatically
+statusLabel.SetText("Loading viewer...")
+if err := startViewer(ctx, dbFile, statusLabel); err != nil {
+statusLabel.SetText(fmt.Sprintf("Export complete, but viewer failed to start: %v\nDatabase: %s", err, dbFile))
+slog.ErrorContext(ctx, "failed to start viewer", "error", err)
+} else {
+statusLabel.SetText(fmt.Sprintf("✓ Export complete! Viewer is running.\nDatabase: %s", dbFile))
+}
 }()
 
 backBtn := widget.NewButton("← Back to Selection", func() {
@@ -531,4 +543,44 @@ return nil, err
 }
 
 return ctrl, nil
+}
+
+// startViewer starts the slackdump viewer for the given database file
+func startViewer(ctx context.Context, dbFile string, statusLabel *widget.Label) error {
+// Load the database source
+src, err := source.OpenDatabase(ctx, dbFile)
+if err != nil {
+return fmt.Errorf("failed to open database: %w", err)
+}
+
+// Create viewer on localhost with a dynamic port
+listenAddr := "127.0.0.1:8080"
+statusLabel.SetText(fmt.Sprintf("Starting viewer on %s...", listenAddr))
+
+v, err := viewer.New(ctx, listenAddr, src)
+if err != nil {
+return fmt.Errorf("failed to create viewer: %w", err)
+}
+
+// Start the viewer in a goroutine
+go func() {
+if err := v.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+slog.ErrorContext(ctx, "viewer server error", "error", err)
+}
+}()
+
+// Give the server a moment to start
+time.Sleep(500 * time.Millisecond)
+
+// Open the browser
+viewerURL := fmt.Sprintf("http://%s", listenAddr)
+go func() {
+if err := browser.OpenURL(viewerURL); err != nil {
+slog.ErrorContext(ctx, "failed to open browser", "error", err)
+} else {
+slog.InfoContext(ctx, "opened browser", "url", viewerURL)
+}
+}()
+
+return nil
 }

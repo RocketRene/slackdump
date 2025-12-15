@@ -9,6 +9,7 @@ A graphical user interface for the Slackdump tool, specifically designed for res
 - **Date Filtering**: Default export from 2025 (configurable)
 - **Direct Integration**: Uses the slackdump package directly (not as an external binary)
 - **SQLite Database Export**: Saves all data to a SQLite database using the same format as the archive command
+- **Automatic Viewer**: Automatically launches the built-in web viewer after export completes
 
 ## Building
 
@@ -41,6 +42,7 @@ After building, run the executable:
 4. Click "Next: Select Channels" to authenticate and retrieve channels
 5. Select the channels you want to export
 6. Click "Export Selected" to start the export process
+7. After export completes, the viewer will automatically launch in your browser at `http://127.0.0.1:8080`
 
 ## Export Format
 
@@ -60,6 +62,20 @@ The database can be:
 - Queried directly using SQLite tools (e.g., SQLite Browser, DBeaver)
 - Converted to other formats using `slackdump convert`
 - Viewed using `slackdump view <database-file>`
+
+## Built-in Viewer
+
+After the export completes, the tool automatically launches a built-in web viewer:
+
+- **URL**: `http://127.0.0.1:8080`
+- **Features**:
+  - Browse all exported channels
+  - View messages and threads
+  - Search conversations
+  - Display user information
+  - Show file attachments
+
+The viewer provides an intuitive web interface to explore your exported Slack data without requiring any additional tools.
 
 ## Authentication
 
