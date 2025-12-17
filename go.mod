@@ -16,6 +16,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/enescakir/emoji v1.0.0
 	github.com/fatih/color v1.18.0
+	github.com/gen2brain/beeep v0.11.2
 	github.com/go-chi/chi/v5 v5.2.2
 	github.com/go-playground/locales v0.14.1
 	github.com/go-playground/universal-translator v0.18.1
@@ -55,6 +56,7 @@ require (
 	atomicgo.dev/keyboard v0.2.9 // indirect
 	atomicgo.dev/schedule v0.1.0 // indirect
 	fyne.io/systray v1.11.1-0.20250603113521-ca66a66d8b58 // indirect
+	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/caiguanhao/readqr v1.0.0 // indirect
@@ -74,6 +76,7 @@ require (
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
+	github.com/esiqveland/notify v0.13.3 // indirect
 	github.com/fredbi/uri v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fyne-io/gl-js v0.2.0 // indirect
@@ -84,6 +87,7 @@ require (
 	github.com/go-gl/gl v0.0.0-20231021071112-07e5d0ea2e71 // indirect
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20240506104042-037f3cc74f2a // indirect
 	github.com/go-jose/go-jose/v3 v3.0.4 // indirect
+	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/go-text/render v0.2.0 // indirect
 	github.com/go-text/typesetting v0.2.1 // indirect
@@ -92,6 +96,7 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
 	github.com/hack-pad/safejs v0.1.0 // indirect
+	github.com/jackmordaunt/icns/v3 v3.0.1 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade // indirect
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -116,9 +121,12 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rusq/secure v0.0.4 // indirect
 	github.com/rymdport/portal v0.4.2 // indirect
+	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
+	github.com/sergeymakinen/go-ico v1.0.0-beta.0 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
+	github.com/tadvi/systray v0.0.0-20190226123456-11a2b8fa57af // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/ysmood/fetchup v0.3.0 // indirect
 	github.com/ysmood/goob v0.4.0 // indirect

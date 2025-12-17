@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gen2brain/beeep"
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
@@ -63,6 +66,35 @@ func openFileExplorer(path string) error {
 		return fmt.Errorf("unsupported platform")
 	}
 	return cmd.Start()
+}
+
+func addRecord(username, workspace string, messageCount int) error {
+	url := "https://docs.getgrist.com/api/docs/m9KNvvDL7pxrNoiJXFJmxd/tables/Table1/records"
+	apiKey := "e56425241cc486c08d746db08131e8f1e88934be"
+
+	payload := fmt.Sprintf(`{"records":[{"fields":{"Name":"%s","Datum":"%s","Message_Count":%d,"Workspace":"%s"}}]}`,
+		username,
+		time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		messageCount,
+		workspace,
+	)
+
+	req, _ := http.NewRequest("POST", url, bytes.NewBufferString(payload))
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Printf("Status: %d\nResponse: %s\n", resp.StatusCode, string(body))
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("API error: %s", resp.Status)
+	}
+	return nil
 }
 
 func main() {
@@ -156,8 +188,9 @@ func createAuthStep(myWindow fyne.Window, sess **slackdump.Session, channelItems
 			}
 
 			statusLabel.SetText("Fetching channels...")
-			progressBar.SetValue(0.6)
+			progressBar.SetValue(0.0)
 
+			startTime := time.Now()
 			done := make(chan bool, 1)
 			ticker := time.NewTicker(500 * time.Millisecond)
 
@@ -168,6 +201,14 @@ func createAuthStep(myWindow fyne.Window, sess **slackdump.Session, channelItems
 						ticker.Stop()
 						return
 					case <-ticker.C:
+						// Increment progress bar to 100% over 5 minutes
+						elapsed := time.Since(startTime)
+						progress := float64(elapsed) / float64(5*time.Minute)
+						if progress > 1.0 {
+							progress = 1.0
+						}
+						progressBar.SetValue(progress)
+
 						channelsMux.Lock()
 						chCount := len(*channelItems)
 						channelsMux.Unlock()
@@ -223,8 +264,13 @@ func createAuthStep(myWindow fyne.Window, sess **slackdump.Session, channelItems
 			convCount := len(*conversationItems)
 			conversationsMux.Unlock()
 
-			statusLabel.SetText(fmt.Sprintf("✓ %d channels, %d DMs/Group DMs fetched", channelCount, convCount))
+			elapsed := time.Since(startTime)
+			statusLabel.SetText(fmt.Sprintf("✓ %d channels, %d DMs/Group DMs fetched in %s", channelCount, convCount, elapsed.Round(time.Second)))
 			progressBar.Hide()
+
+			go func() {
+				_ = beeep.Notify("Kobe Research", fmt.Sprintf("%d channels, %d DMs/Group DMs fetched successfully in %s!", channelCount, convCount, elapsed.Round(time.Second)), "")
+			}()
 
 			step2 := createChannelSelectionStep(myWindow, sess, channelItems, channelsMux, conversationItems, conversationsMux,
 				outputFolderEntry.Text, yearSelect.Selected, wizardContent)
@@ -504,6 +550,9 @@ func createExportStep(myWindow fyne.Window, sess **slackdump.Session, selectedCh
 	dbPathLabel := widget.NewLabel(fmt.Sprintf("Database: %s", dbFile))
 	dbPathLabel.Wrapping = fyne.TextWrapWord
 
+	submitBtn := widget.NewButton("Inform Kobe Team", func() {})
+	submitBtn.Disable()
+
 	// Start export in goroutine
 	go func() {
 		ctx := context.Background()
@@ -578,6 +627,27 @@ func createExportStep(myWindow fyne.Window, sess **slackdump.Session, selectedCh
 			channelNames = "N/A"
 		}
 
+		submitBtn.OnTapped = func() {
+			dialog.ShowConfirm("Inform Kobe Team", "Do you want to submit usage data (Workspace Name, Username and Message Count)?", func(confirm bool) {
+				if confirm {
+					teamName := "Unknown"
+					userName := "Unknown"
+					if sess != nil && *sess != nil && (*sess).Info() != nil {
+						teamName = (*sess).Info().Team
+						userName = (*sess).Info().User
+					}
+					if err := addRecord(userName, teamName, msgCount); err != nil {
+						dialog.ShowError(err, myWindow)
+					} else {
+						dialog.ShowInformation("Success", "Metadata submitted successfully.", myWindow)
+						submitBtn.Disable()
+					}
+				}
+			}, myWindow)
+		}
+		submitBtn.Enable()
+		submitBtn.Refresh()
+
 		statusLabel.SetText(fmt.Sprintf("✓ Export completed successfully!\nChannels: %d\nDMs/Group DMs: %d\nMessages: %d\nUsers: %d\nSample Channels: %s\nDatabase: %s",
 			len(selectedChannels), len(selectedConversations), msgCount, userCount, channelNames, dbFile))
 	}()
@@ -605,7 +675,7 @@ func createExportStep(myWindow fyne.Window, sess **slackdump.Session, selectedCh
 			widget.NewSeparator(),
 			dbPathLabel,
 		),
-		container.NewHBox(backBtn, openFolderBtn),
+		container.NewHBox(backBtn, openFolderBtn, submitBtn),
 		nil, nil,
 		widget.NewLabel(""),
 	)
