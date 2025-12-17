@@ -43,6 +43,12 @@ type channelItem struct {
 	selected bool
 }
 
+type conversationItem struct {
+	conversation slack.Channel
+	displayName  string
+	selected     bool
+}
+
 // openFileExplorer opens the native file explorer at the given path
 func openFileExplorer(path string) error {
 	var cmd *exec.Cmd
@@ -67,16 +73,18 @@ func main() {
 	var sess *slackdump.Session
 	var channelItems []*channelItem
 	var channelsMux sync.Mutex
+	var conversationItems []*conversationItem
+	var conversationsMux sync.Mutex
 
 	wizardContent := container.NewStack()
-	step1 := createAuthStep(myWindow, &sess, &channelItems, &channelsMux, wizardContent)
+	step1 := createAuthStep(myWindow, &sess, &channelItems, &channelsMux, &conversationItems, &conversationsMux, wizardContent)
 	wizardContent.Objects = []fyne.CanvasObject{step1}
 
 	myWindow.SetContent(wizardContent)
 	myWindow.ShowAndRun()
 }
 
-func createAuthStep(myWindow fyne.Window, sess **slackdump.Session, channelItems *[]*channelItem, channelsMux *sync.Mutex, wizardContent *fyne.Container) fyne.CanvasObject {
+func createAuthStep(myWindow fyne.Window, sess **slackdump.Session, channelItems *[]*channelItem, channelsMux *sync.Mutex, conversationItems *[]*conversationItem, conversationsMux *sync.Mutex, wizardContent *fyne.Container) fyne.CanvasObject {
 	title := widget.NewLabel("Kobe User Research Slack Export Tool")
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	title.Alignment = fyne.TextAlignCenter
@@ -161,19 +169,40 @@ func createAuthStep(myWindow fyne.Window, sess **slackdump.Session, channelItems
 						return
 					case <-ticker.C:
 						channelsMux.Lock()
-						count := len(*channelItems)
+						chCount := len(*channelItems)
 						channelsMux.Unlock()
-						if count > 0 {
-							statusLabel.SetText(fmt.Sprintf("Fetching channels... (%d found)", count))
+						conversationsMux.Lock()
+						convCount := len(*conversationItems)
+						conversationsMux.Unlock()
+						if chCount > 0 || convCount > 0 {
+							statusLabel.SetText(fmt.Sprintf("Fetching... (%d channels, %d DMs)", chCount, convCount))
 						}
 					}
 				}
 			}()
 
 			err = (*sess).StreamChannels(ctx, slackdump.AllChanTypes, func(ch slack.Channel) error {
-				channelsMux.Lock()
-				*channelItems = append(*channelItems, &channelItem{channel: ch, selected: false})
-				channelsMux.Unlock()
+				if ch.IsIM || ch.IsMpIM {
+					// This is a DM or Group DM
+					conversationsMux.Lock()
+					displayName := ch.Name
+					if ch.IsIM {
+						displayName = fmt.Sprintf("DM: %s", ch.User)
+					} else if ch.IsMpIM {
+						displayName = fmt.Sprintf("Group DM: %s", ch.Purpose.Value)
+					}
+					*conversationItems = append(*conversationItems, &conversationItem{
+						conversation: ch,
+						displayName:  displayName,
+						selected:     false,
+					})
+					conversationsMux.Unlock()
+				} else {
+					// This is a regular channel
+					channelsMux.Lock()
+					*channelItems = append(*channelItems, &channelItem{channel: ch, selected: false})
+					channelsMux.Unlock()
+				}
 				return nil
 			})
 
@@ -187,13 +216,17 @@ func createAuthStep(myWindow fyne.Window, sess **slackdump.Session, channelItems
 			}
 
 			channelsMux.Lock()
-			finalCount := len(*channelItems)
+			channelCount := len(*channelItems)
 			channelsMux.Unlock()
 
-			statusLabel.SetText(fmt.Sprintf("✓ %d channels - Click Next", finalCount))
+			conversationsMux.Lock()
+			convCount := len(*conversationItems)
+			conversationsMux.Unlock()
+
+			statusLabel.SetText(fmt.Sprintf("✓ %d channels, %d DMs/Group DMs fetched", channelCount, convCount))
 			progressBar.Hide()
 
-			step2 := createChannelSelectionStep(myWindow, sess, channelItems, channelsMux,
+			step2 := createChannelSelectionStep(myWindow, sess, channelItems, channelsMux, conversationItems, conversationsMux,
 				outputFolderEntry.Text, yearSelect.Selected, wizardContent)
 			wizardContent.Objects = []fyne.CanvasObject{step2}
 			wizardContent.Refresh()
@@ -218,7 +251,7 @@ func createAuthStep(myWindow fyne.Window, sess **slackdump.Session, channelItems
 }
 
 func createChannelSelectionStep(myWindow fyne.Window, sess **slackdump.Session, channelItems *[]*channelItem,
-	channelsMux *sync.Mutex, outputFolder, selectedYear string, wizardContent *fyne.Container) fyne.CanvasObject {
+	channelsMux *sync.Mutex, conversationItems *[]*conversationItem, conversationsMux *sync.Mutex, outputFolder, selectedYear string, wizardContent *fyne.Container) fyne.CanvasObject {
 
 	title := widget.NewLabel("Step 2: Select Channels")
 	title.TextStyle = fyne.TextStyle{Bold: true}
@@ -273,13 +306,20 @@ func createChannelSelectionStep(myWindow fyne.Window, sess **slackdump.Session, 
 	})
 
 	backBtn := widget.NewButton("← Back", func() {
-		step1 := createAuthStep(myWindow, sess, channelItems, channelsMux, wizardContent)
+		step1 := createAuthStep(myWindow, sess, channelItems, channelsMux, conversationItems, conversationsMux, wizardContent)
 		wizardContent.Objects = []fyne.CanvasObject{step1}
 		wizardContent.Refresh()
 	})
 
+	nextBtn := widget.NewButton("Next: Select DMs →", func() {
+		step3 := createConversationSelectionStep(myWindow, sess, channelItems, channelsMux, conversationItems, conversationsMux,
+			outputFolder, selectedYear, wizardContent)
+		wizardContent.Objects = []fyne.CanvasObject{step3}
+		wizardContent.Refresh()
+	})
+
 	var exportBtn *widget.Button
-	exportBtn = widget.NewButton("Export Selected", func() {
+	exportBtn = widget.NewButton("Skip to Export", func() {
 		channelsMux.Lock()
 		var selectedChannels []slack.Channel
 		for _, item := range *channelItems {
@@ -288,11 +328,6 @@ func createChannelSelectionStep(myWindow fyne.Window, sess **slackdump.Session, 
 			}
 		}
 		channelsMux.Unlock()
-
-		if len(selectedChannels) == 0 {
-			dialog.ShowError(fmt.Errorf("select at least one channel"), myWindow)
-			return
-		}
 
 		year, _ := strconv.Atoi(selectedYear)
 		if year == 0 {
@@ -314,8 +349,124 @@ func createChannelSelectionStep(myWindow fyne.Window, sess **slackdump.Session, 
 			return
 		}
 
-		step3 := createExportStep(myWindow, sess, selectedChannels, outputPath, oldest, wizardContent, channelItems, channelsMux)
-		wizardContent.Objects = []fyne.CanvasObject{step3}
+		step4 := createExportStep(myWindow, sess, selectedChannels, []slack.Channel{}, outputPath, oldest, wizardContent, channelItems, channelsMux, conversationItems, conversationsMux)
+		wizardContent.Objects = []fyne.CanvasObject{step4}
+		wizardContent.Refresh()
+	})
+
+	controls := container.NewHBox(selectAllBtn, deselectAllBtn)
+
+	return container.NewBorder(
+		container.NewVBox(title, widget.NewSeparator(), statusLabel, widget.NewSeparator(), controls),
+		container.NewHBox(backBtn, exportBtn, nextBtn),
+		nil, nil,
+		container.NewScroll(channelList),
+	)
+}
+
+func createConversationSelectionStep(myWindow fyne.Window, sess **slackdump.Session, channelItems *[]*channelItem,
+	channelsMux *sync.Mutex, conversationItems *[]*conversationItem, conversationsMux *sync.Mutex, outputFolder, selectedYear string, wizardContent *fyne.Container) fyne.CanvasObject {
+
+	title := widget.NewLabel("Step 3: Select DMs and Group DMs")
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	title.Alignment = fyne.TextAlignCenter
+
+	statusLabel := widget.NewLabel("Select DMs and Group DMs to export")
+	statusLabel.Wrapping = fyne.TextWrapWord
+
+	conversationList := widget.NewList(
+		func() int {
+			conversationsMux.Lock()
+			defer conversationsMux.Unlock()
+			return len(*conversationItems)
+		},
+		func() fyne.CanvasObject {
+			return widget.NewCheck("", nil)
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			conversationsMux.Lock()
+			defer conversationsMux.Unlock()
+			if id < len(*conversationItems) {
+				check := obj.(*widget.Check)
+				item := (*conversationItems)[id]
+				check.Text = fmt.Sprintf("%s (%s)", item.displayName, item.conversation.ID)
+				check.Checked = item.selected
+				check.OnChanged = func(checked bool) {
+					conversationsMux.Lock()
+					item.selected = checked
+					conversationsMux.Unlock()
+				}
+				check.Refresh()
+			}
+		},
+	)
+
+	selectAllBtn := widget.NewButton("Select All", func() {
+		conversationsMux.Lock()
+		for _, item := range *conversationItems {
+			item.selected = true
+		}
+		conversationsMux.Unlock()
+		conversationList.Refresh()
+	})
+
+	deselectAllBtn := widget.NewButton("Deselect All", func() {
+		conversationsMux.Lock()
+		for _, item := range *conversationItems {
+			item.selected = false
+		}
+		conversationsMux.Unlock()
+		conversationList.Refresh()
+	})
+
+	backBtn := widget.NewButton("← Back", func() {
+		step2 := createChannelSelectionStep(myWindow, sess, channelItems, channelsMux, conversationItems, conversationsMux,
+			outputFolder, selectedYear, wizardContent)
+		wizardContent.Objects = []fyne.CanvasObject{step2}
+		wizardContent.Refresh()
+	})
+
+	exportBtn := widget.NewButton("Export Selected →", func() {
+		channelsMux.Lock()
+		var selectedChannels []slack.Channel
+		for _, item := range *channelItems {
+			if item.selected {
+				selectedChannels = append(selectedChannels, item.channel)
+			}
+		}
+		channelsMux.Unlock()
+
+		conversationsMux.Lock()
+		var selectedConversations []slack.Channel
+		for _, item := range *conversationItems {
+			if item.selected {
+				selectedConversations = append(selectedConversations, item.conversation)
+			}
+		}
+		conversationsMux.Unlock()
+
+		year, _ := strconv.Atoi(selectedYear)
+		if year == 0 {
+			year = 2025
+		}
+		oldest := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		outputPath := outputFolder
+		if outputPath == "" {
+			outputPath = "~/Documents/koberesearch/"
+		}
+		if strings.HasPrefix(outputPath, "~/") {
+			home, _ := os.UserHomeDir()
+			outputPath = filepath.Join(home, outputPath[2:])
+		}
+
+		if err := os.MkdirAll(outputPath, 0755); err != nil {
+			dialog.ShowError(err, myWindow)
+			return
+		}
+
+		step4 := createExportStep(myWindow, sess, selectedChannels, selectedConversations, outputPath, oldest, wizardContent, channelItems, channelsMux, conversationItems, conversationsMux)
+		wizardContent.Objects = []fyne.CanvasObject{step4}
 		wizardContent.Refresh()
 	})
 
@@ -325,14 +476,14 @@ func createChannelSelectionStep(myWindow fyne.Window, sess **slackdump.Session, 
 		container.NewVBox(title, widget.NewSeparator(), statusLabel, widget.NewSeparator(), controls),
 		container.NewHBox(backBtn, exportBtn),
 		nil, nil,
-		container.NewScroll(channelList),
+		container.NewScroll(conversationList),
 	)
 }
 
-func createExportStep(myWindow fyne.Window, sess **slackdump.Session, selectedChannels []slack.Channel,
-	outputPath string, oldest time.Time, wizardContent *fyne.Container, channelItems *[]*channelItem, channelsMux *sync.Mutex) fyne.CanvasObject {
+func createExportStep(myWindow fyne.Window, sess **slackdump.Session, selectedChannels []slack.Channel, selectedConversations []slack.Channel,
+	outputPath string, oldest time.Time, wizardContent *fyne.Container, channelItems *[]*channelItem, channelsMux *sync.Mutex, conversationItems *[]*conversationItem, conversationsMux *sync.Mutex) fyne.CanvasObject {
 
-	title := widget.NewLabel("Step 3: Exporting Channels")
+	title := widget.NewLabel("Step 4: Exporting Data")
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	title.Alignment = fyne.TextAlignCenter
 
@@ -357,10 +508,13 @@ func createExportStep(myWindow fyne.Window, sess **slackdump.Session, selectedCh
 	go func() {
 		ctx := context.Background()
 
-		// Create channel IDs list for EntityList
+		// Create channel IDs list for EntityList (both channels and conversations)
 		var channelIDs []string
 		for _, ch := range selectedChannels {
 			channelIDs = append(channelIDs, ch.ID)
+		}
+		for _, conv := range selectedConversations {
+			channelIDs = append(channelIDs, conv.ID)
 		}
 
 		// Create entity list from channel IDs
@@ -424,13 +578,14 @@ func createExportStep(myWindow fyne.Window, sess **slackdump.Session, selectedCh
 			channelNames = "N/A"
 		}
 
-		statusLabel.SetText(fmt.Sprintf("✓ Export completed successfully!\nMessages: %d\nUsers: %d\nChannels: %s\nDatabase: %s", msgCount, userCount, channelNames, dbFile))
+		statusLabel.SetText(fmt.Sprintf("✓ Export completed successfully!\nChannels: %d\nDMs/Group DMs: %d\nMessages: %d\nUsers: %d\nSample Channels: %s\nDatabase: %s",
+			len(selectedChannels), len(selectedConversations), msgCount, userCount, channelNames, dbFile))
 	}()
 
 	backBtn := widget.NewButton("← Back to Selection", func() {
-		step2 := createChannelSelectionStep(myWindow, sess, channelItems, channelsMux,
+		step3 := createConversationSelectionStep(myWindow, sess, channelItems, channelsMux, conversationItems, conversationsMux,
 			outputPath, fmt.Sprintf("%d", oldest.Year()), wizardContent)
-		wizardContent.Objects = []fyne.CanvasObject{step2}
+		wizardContent.Objects = []fyne.CanvasObject{step3}
 		wizardContent.Refresh()
 	})
 
