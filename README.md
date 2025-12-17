@@ -1,273 +1,208 @@
-# Slack Dumper
+# Slack Export Tool for User Research
 
-Purpose:  archive your private and public Slack messages, users, channels,
-files and emojis.  Generate Slack Export without admin privileges.
+A simple graphical application to export your Slack workspace conversations into a structured database format for analysis and research purposes.
 
-[![Slackdump screenshot](doc/slackdump.webp)](https://github.com/rusq/slackdump/releases/)
+![Screenshot placeholder](doc/slackdump.webp)
 
-**Quick links**:
+## What This Tool Does
 
-- [Installation And Quickstart](#installation-and-quickstart)
-- [Join the discussion in Telegram](https://t.me/slackdump).
-- [Buy me a cup of tea](https://ko-fi.com/rusq_), or use **GitHub Sponsors**
-  button on the top of the page.
-- [![Go reference](https://pkg.go.dev/badge/github.com/rusq/slackdump/v3.svg)][godoc]
-- How to's:
+This application helps you:
 
-  - [Mattermost migration][mmost] steps
-  - [SlackLogViewerとSlackdumpを一緒に使用する](https://kenkyu-note.hatenablog.com/entry/2022/09/02/090949)
-  - [v1 Overview on Medium.com](https://medium.com/@gilyazov/downloading-your-private-slack-conversations-52e50428b3c2)  (outdated)
+- **Export Slack conversations** from public channels, private channels, and direct messages
+- **Select specific channels** you want to export (no need to export everything)
+- **Filter by date** - export only messages from a specific year (e.g., 2025)
+- **Store in SQLite database** - structured, machine-readable format for analysis
+- **Privacy-focused** - all data stays on your local machine, no cloud storage
 
-[godoc]: https://pkg.go.dev/github.com/rusq/slackdump/v3/
-[mmost]: doc/usage-export.rst
+## Perfect For
 
-## Description
+- **User research** - analyzing communication patterns and work artifacts
+- **Skills evaluation** - understanding how teams collaborate and solve problems
+- **Knowledge preservation** - saving important conversations before they're lost
+- **Personal archiving** - keeping your own work history
 
-Typical use scenarios:
+## Getting Started
 
-* archive your private conversations from Slack when the administrator
-  does not allow you to install applications OR you don't want to use
-  potentially privacy-violating third-party tools,
-* archive channels from Slack when you're on a free "no archive" subscription,
-  so you don't lose valuable knowledge in those channels,
-* create a Slack Export archive without admin access, or
-* save your favourite emojis.
+### Prerequisites
 
-There are several modes of operation
+You'll need:
+1. A Slack workspace URL (e.g., `your-workspace.slack.com`)
+2. Your Slack authentication cookie (we'll show you how to get this)
 
-1. List users/channels
-1. Dumping messages and threads
-1. Creating a Slack Export in Mattermost or Standard modes.
-1. Creating an Archive
-1. Emoji download mode.
-1. Viewing export, dump or archive files or directories (displays images).
-1. Search mode (messages and files).
+### Installation
 
-Run `slackdump help` to see all available options:
+#### Option 1: Download Pre-built Application (Recommended)
 
-## Installation and Quickstart
+1. Download the latest release for your operating system from the [releases page](https://github.com/rusq/slackdump/releases/)
+2. Unpack the archive to any directory
+3. Run `slackdump-gui` (or `slackdump-gui.exe` on Windows)
 
-On macOS, you can install Slackdump with Homebrew:
+> **Note for macOS/Windows users:** You may see an "Unknown developer" warning. This is normal because the app isn't signed with a developer certificate.
+>
+> To bypass:
+> - **Windows**: Click "More info" → "Run Anyway"
+> - **macOS 14 and earlier**: Open in Finder, hold Option, double-click, choose "Run"
+> - **macOS 15+**: Try to open the app, then go to System Settings → Privacy & Security → "Open Anyway"
 
-```shell
-brew install slackdump
+#### Option 2: Build from Source
+
+If you have Go installed:
+
+```bash
+git clone https://github.com/rusq/slackdump.git
+cd slackdump
+go run cmd/slackdump-gui/main.go
 ```
 
-On other Operating Systems, please follow these steps:
+### Getting Your Slack Cookie
 
-1. Download the latest release for your operating system from the [releases] page.
-1. Unpack the archive to any directory.
-1. Run the `./slackdump` or `slackdump.exe` executable (see note below).
-1. You know the drill:  use arrow keys to select the menu item, and Enter (or
-   Return) to confirm.
-1. Follow these [quickstart instructions][man-quickstart].
+You need to get your authentication cookie from Slack's web interface:
 
-[releases]: https://github.com/rusq/slackdump/releases/
+1. Open Slack in your web browser and log in
+2. Open browser Developer Tools (F12 or Cmd+Option+I on Mac)
+3. Go to the "Application" or "Storage" tab
+4. Find "Cookies" in the left sidebar
+5. Look for a cookie starting with `xoxd-`
+6. Copy the entire cookie value
 
-> [!NOTE] 
-> On Windows and macOS you may be presented with "Unknown developer" window,
-> this is fine.  Reason for this is that the executable hasn't been signed by
-> the developer certificate.
+**Important:** Never share this cookie with anyone - it's like your password!
 
-  To work around this:
+### Using the Application
 
-  - **on Windows**: click "more information", and press "Run
-    Anyway" button.
-  - **on macOS** 14 Sonoma and prior:  open the folder in Finder, hold Option
-    and double click the executable, choose Run.
-  - **on macOS** 15 Sequoia and later:  start the slackdump, OS will show the
-    "Unknown developer" window, then go to System Preferences -> Security and
-    Privacy -> General, and press "Open Anyway" button.
+1. **Launch the app** - Run `slackdump-gui`
 
-### Getting Help
+2. **Step 1: Authentication**
+   - Enter your workspace subdomain (e.g., `your-workspace`)
+   - Paste your Slack cookie (starting with `xoxd-`)
+   - Choose the output folder (default: `~/Documents/koberesearch/`)
+   - Select the year to export (e.g., 2025)
+   - Click "Authenticate & Fetch Channels"
 
-- Quickstart guide: `slackdump help quickstart`, read [online][man-quickstart].
-- Generic command overview: `man ./slackdump.1`
-- [Ez-Login 3000](https://github.com/rusq/slackdump/wiki/EZ-Login-3000) Guide.
-- V2 to V3 migration notes: `slackdump help v2migrate`, read [online][man-v2migrate].
-- What's new in V3: `slackdump help whatsnew`, read [online][man-changelog].
+3. **Step 2: Select Channels**
+   - Browse the list of available channels
+   - Use "Select All" or choose specific channels
+   - Click "Export Selected"
 
-[man-quickstart]: https://github.com/rusq/slackdump/blob/master/cmd/slackdump/internal/man/assets/quickstart.md
-[man-v2migrate]: https://github.com/rusq/slackdump/blob/master/cmd/slackdump/internal/man/assets/v2migr.md
-[man-changelog]: https://github.com/rusq/slackdump/blob/master/cmd/slackdump/internal/man/assets/changelog.md
+4. **Step 3: Export**
+   - Watch the progress as your data is exported
+   - When complete, you'll see statistics about the export
+   - Click "Open Export Folder" to view your database file
 
-## Running Slackdump from a Repo Checkout
+### What Gets Exported
 
-If you've cloned the repository and want to run slackdump directly without downloading a release, you can do one of the following:
+✅ **Included:**
+- All message text and threads
+- User information
+- Channel names and metadata
+- Message timestamps
+- Thread relationships
 
-1. **Build and run** (creates an executable):
-   ```shell
-   go build -o slackdump ./cmd/slackdump
-   ./slackdump wiz
-   ```
+❌ **Not included:**
+- Files and attachments
+- Images and media
+- Emojis and reactions
+- User avatars
 
-2. **Run directly**:
-   ```shell
-   go run ./cmd/slackdump wiz
-   ```
+### Understanding Your Export
 
-Note: You need Go installed on your system (see `go.mod` for the version)
+Your export is saved as a SQLite database file (`.db`) in a timestamped folder:
 
-
-## Slackord2: Migrating to Discord
-
-If you're migrating to Discord, the recommended way is to use
-[Slackord2](https://github.com/thomasloupe/Slackord2) — a great tool with a
-nice GUI, that is compatible with the export files generated by Slackdump.
-
-## User Guide
-
-For more advanced features and instructions, please see the [User Guide][ug],
-and read `slackdump help` pages.
-
-# Previewing Results
-
-Once the workspace data is dumped, you can run built-in viewer:
-
-```shell
-slackdump view <zip or directory>
+```
+~/Documents/koberesearch/
+└── export_20250117_143022/
+    └── slackdump.db
 ```
 
-The built-in viewer supports all types of dumps:
+This database contains structured tables:
+- `MESSAGE` - all messages and threads
+- `CHANNEL` - channel information
+- `S_USER` - user profiles
 
-1. Slackdump Archive format;
-1. Standard and Mattermost Slack Export;
-1. Dump mode files
-  
-The built-in viewer is experimental, any contributions to make it better looking are welcome.
+You can analyze this database using:
+- SQLite browser tools
+- SQL queries
+- AI tools like Claude Code
+- Data analysis scripts
 
-Alternatively, you can use one of the following tools to preview the
-export results:
+## Privacy & Data Handling
 
-- [SlackLogViewer] - a fast and powerful Slack Export viewer written in C++, works on Export files (images won't be displayed, unless you used an export token flag).
-- [Slackdump2Html] - a great Python application that converts Slack Dump to a
-  static browsable HTML.  It works on Dump mode files.
-- [slack export viewer][slack-export-viewer] - Slack Export Viewer is a well known viewer for
-  slack export files. Supports displaying files if saved in the "Standard" file mode.
+🔒 **Your data stays private:**
+- All exports are stored **locally on your machine**
+- No data is sent to any cloud services
+- No unencrypted online storage
+- Easy to delete - just remove the export folder
 
-[SlackLogViewer]: https://github.com/thayakawa-gh/SlackLogViewer/releases
-[Slackdump2Html]: https://github.com/kununu/slackdump2html
-[slack-export-viewer]: https://github.com/hfaran/slack-export-viewer
+⚠️ **Security reminders:**
+- Keep your Slack cookie secure (don't share it)
+- Delete exports when you're done with them
+- Store exports in encrypted folders if needed
 
+## Limitations
 
-## Using as a library
+- **Free Slack workspaces**: Only exports messages from the last 90 days (Slack API limitation)
+- **Export speed**: Depends on the number of messages and channels
+- **Year filtering**: Only exports messages from the selected year
+- **No media files**: Attachments and images are not downloaded
 
-Download:
+## Troubleshooting
 
-```shell
-go get github.com/rusq/slackdump/v3
-```
+### "Auth failed" error
+- Check that your cookie is correct and hasn't expired
+- Try getting a fresh cookie from Slack
+- Make sure your workspace subdomain is correct
 
+### "No channels found"
+- Verify you're logged into the correct workspace
+- Check your cookie hasn't expired
+- Ensure you have access to channels in the workspace
 
-### Example
+### Export is slow
+- This is normal for workspaces with many messages
+- Reduce the number of channels selected
+- Consider exporting fewer months of data
 
-```go
-package main
+### Application won't start (macOS)
+- Follow the security bypass steps above
+- Check System Settings → Privacy & Security
 
-import (
-  "context"
-  "log"
+## Getting Help
 
-  "github.com/rusq/slackdump/v2"
-  "github.com/rusq/slackdump/v2/auth"
-)
+- **Technical issues**: [Open an issue on GitHub](https://github.com/rusq/slackdump/issues)
+- **Questions**: Check existing issues or start a discussion
+- **Documentation**: See the main [slackdump documentation](https://github.com/rusq/slackdump)
 
-func main() {
-  provider, err := auth.NewValueAuth("xoxc-...", "xoxd-...")
-  if err != nil {
-      log.Print(err)
-      return
-  }
-  sd, err := slackdump.New(context.Background(), provider)
-  if err != nil {
-      log.Print(err)
-      return
-  }
-  _ = sd
-}
-```
+## Advanced Usage
 
-See [Package Documentation][godoc].
+This GUI application is built on top of [slackdump](https://github.com/rusq/slackdump), a powerful command-line tool. For more advanced features like:
+- Viewing exported data
+- Converting between formats
+- Automated exports
+- Emoji downloads
 
-### Using Custom Logger
-Slackdump uses a "log/slog" package, it defaults to "slog.Default()".  Set the
-default slog logger to the one you want to use.
+Check out the [full slackdump documentation](https://github.com/rusq/slackdump).
 
-If you were using `logger.Silent` before, you would need to
-[implement][slog-handler-guide] a discarding [Handler][godoc-slog-handler] for slog.
+## Technical Details
 
-[slog-handler-guide]: https://github.com/golang/example/blob/master/slog-handler-guide/README.md
-[godoc-slog-handler]: https://pkg.go.dev/log/slog#Handler
+- **Language**: Go
+- **GUI Framework**: Fyne
+- **Database**: SQLite (pure Go implementation, no CGO required)
+- **Slack API**: Uses official Slack Web API
+- **License**: See LICENSE file
 
-## FAQ
+## Contributing
 
-#### Do I need to create a Slack application?
+This is a research tool under active development. Contributions are welcome:
+- Report bugs via GitHub issues
+- Suggest features
+- Submit pull requests
+- Improve documentation
 
-No, you don't.  Just run the application and EZ-Login 3000 will take
-care of the authentication or, alternatively, grab that token and
-cookie from the browser Slack session.  See [User's Guide][ug].
+## Credits
 
-#### I'm getting "invalid_auth" error
+Built on [slackdump](https://github.com/rusq/slackdump) by [@rusq](https://github.com/rusq)
 
-Run `slackdump workspace new <name or url>` to reauthenticate.
+GUI application developed for user research and skills evaluation studies.
 
-#### How to read the export file?
+## License
 
-```shell
-slackdump view <ZIP-archive or directory>
-```
-
-#### My Slack Workspace is on the Free plan.  Can I get data older than 90-days?
-
-No, unfortunately you can't.  Slack doesn't allow to export data older than 90
-days for free workspaces, the API does not return any data before 90 days for
-workspaces on the Free plan.
-
-#### What's the difference between "archive", "export" and "dump"?
-
-"Archive" is the new format introduced in v3, it minimises the memory use
-while scraping the data and also has a universal structure that can be
-converted into export and dump formats at will by using the "convert" command.
-
-"Export" format aims to replicate the files generated when exporting a Slack
-workspace for compatibility.
-
-"Dump" format has one channel per file, there's no workspace information nor
-any users stored.  Should it be required, one must get users and channels by
-running `slackdump list` command.
-
-Behind the scenes slackdump always uses the "archive" file format for all
-operations except "emoji" and "list", and converts to other formats on the
-fly, removing the temporary archive files afterwards.
-
-## Thank you
-Big thanks to all contributors, who submitted a pull request, reported a bug,
-suggested a feature, helped to reproduce, or spent time chatting with me on
-the Telegram or Slack to help to understand the problem or feature and tested
-the proposed solution.
-
-Also, I'd like to thank current sponsors:
-
-- [<img class="avatar avatar-user" src="https://avatars.githubusercontent.com/u/9138285?s=60&amp;v=4" width="30" height="30" alt="@malsatin">](https://github.com/malsatin) @malsatin
-- [<img class="avatar avatar-user" src="https://avatars.githubusercontent.com/u/836183?s=60&amp;v=4" width="30" height="30" alt="@angellk">](https://github.com/angellk) @angellk
-
-And everyone who made a donation to support the project in the past and keep
-supporting the project:
-
-- Davanum S.
-- Vivek R.
-- Fabian I.
-- Ori P.
-- Shir B. L.
-- Emin G.
-- Robert Z.
-- Sudhanshu J.
-
-# Bulletin Board
-
-Messages that were conveyed with the donations:
-
-- 25/01/2022: Stay away from [TheSignChef.com][glassdoor], ya hear, they don't
-  pay what they owe to their employees.
-
-[glassdoor]: https://www.glassdoor.com/Reviews/The-Sign-Chef-Reviews-E1026706.htm
+See LICENSE file for details.
